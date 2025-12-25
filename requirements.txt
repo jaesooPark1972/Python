@@ -1,0 +1,7 @@
+gradio
+pydub
+soundfile
+torch
+torchaudio
+numpy
+scipy
