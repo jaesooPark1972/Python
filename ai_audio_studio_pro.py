@@ -368,9 +368,13 @@ class AudioStudioApp(ctk.CTk):
             self.official_rvc = None
             print("WARNING: RVC library not found.")
         
-        # [NEW] 상단 파형 애니메이션용 고정 데이터 생성
+        # [NEW] 상단 파형 애니메이션용 고정 데이터 및 상태 생성
         import random
-        self.waveform_data = [random.randint(5, 25) for _ in range(250)]
+        import math
+        self.waveform_data = [random.randint(8, 28) for _ in range(150)] # 바 개수 최적화
+        self.wave_phase = 0.0
+        self.current_prog = 0.0
+        self.wave_lines = [] # 라인 객체 캐싱용
 
         self.setup_ui()
         
@@ -1400,37 +1404,57 @@ class AudioStudioApp(ctk.CTk):
             self.effect_path = f
             self.eff_btn.configure(text=f"🔔 {os.path.basename(f)}")
 
-    def draw_initial_waveform(self, p=0):
-        """[UI] 상단 시각화 바 업데이트 (진행도 p 반영)"""
-        if not hasattr(self, 'waveform_data'):
-            import random
-            self.waveform_data = [random.randint(5, 25) for _ in range(250)]
+    def draw_initial_waveform(self, p=None):
+        """[UI] 상단 시각화 바 그리기 및 업데이트 (p가 있으면 진행도 반영)"""
+        if p is not None:
+            self.current_prog = p
             
-        self.viz_canvas.delete("all")
-        # 캔버스 실제 크기 확인
+        # 캔버스 크기 확인
         w = self.viz_canvas.winfo_width()
         h = self.viz_canvas.winfo_height()
-        if w <= 1 or w > 5000: w = 1200 # 초기 로딩 시 보정 (충분히 넓게)
+        if w <= 1 or w > 5000: w = 1200 
         if h <= 1: h = 70
-        
         mid = h / 2
+        
         num_bars = len(self.waveform_data)
-        prog_index = int(p * num_bars)
+        bar_w = w / num_bars
+        prog_index = int(self.current_prog * num_bars)
         
-        # 배경 중심선
-        self.viz_canvas.create_line(0, mid, w, mid, fill="#222", width=1)
-        
-        for i, height in enumerate(self.waveform_data):
-            x = i * (w / num_bars)
-            # 진행도에 따라 색상 변경 (진행된 부분: GOLD, 남은 부분: DARK)
-            if i < prog_index:
-                color = COLOR_GOLD
-            elif i == prog_index:
-                color = "white" # 현재 진행 헤드 시각화
-            else:
-                color = "#444"
+        # 최초 생성 또는 캔버스 초기화 시
+        if not self.wave_lines or len(self.wave_lines) != num_bars:
+            self.viz_canvas.delete("all")
+            self.wave_lines = []
+            # 배경 중심선
+            self.viz_canvas.create_line(0, mid, w, mid, fill="#1A1A1A", width=1)
+            for i in range(num_bars):
+                x = i * bar_w + (bar_w/2)
+                # Premium thick bars
+                line = self.viz_canvas.create_line(x, mid-5, x, mid+5, fill="#333", width=4, capstyle="round")
+                self.wave_lines.append(line)
+
+        # 애니메이션 데이터 계산 및 반영 (왔다리 갔다리 효과)
+        import math
+        for i, line in enumerate(self.wave_lines):
+            # Phase에 따른 유동적인 진폭 계산 (Sine wave + Random base)
+            # i*0.2는 물결이 흐르는 효과, self.wave_phase는 전체적인 움직임
+            mod = math.sin(self.wave_phase + (i * 0.15)) * 0.4 + 0.6
+            height = self.waveform_data[i] * mod
             
-            self.viz_canvas.create_line(x, mid - height, x, mid + height, fill=color, width=2)
+            x_coords = self.viz_canvas.coords(line)
+            if x_coords:
+                x = x_coords[0]
+                self.viz_canvas.coords(line, x, mid - height, x, mid + height)
+                
+                # 색상 업데이트 (진행도 반영)
+                if i < prog_index:
+                    color = COLOR_GOLD
+                elif i == prog_index:
+                    color = "white"
+                else:
+                    # 기본 상태는 어두운 회색, 하지만 움직임이 있으므로 가시성 확보
+                    color = "#333" if not self.is_processing else "#444"
+                
+                self.viz_canvas.itemconfig(line, fill=color)
 
     def analyze_waveform_thread(self, path):
         """[스레드] 오디오 데이터 로딩만 수행"""
@@ -1444,47 +1468,29 @@ class AudioStudioApp(ctk.CTk):
             print(f"Waveform Error: {e}")
 
     def draw_waveform_ui(self, y):
-        """[메인] 춤추는 비주얼라이저 그리기"""
-        self.viz_canvas.delete("all")
-        self.wave_lines = [] # 애니메이션용 라인 ID 저장
-        self.wave_amps = []  # 원본 진폭 데이터 저장
-        
-        w = self.viz_canvas.winfo_width()
-        h = self.viz_canvas.winfo_height()
-        if w < 10: w = 1000
-        
-        # 성능과 디자인을 위해 막대 수를 줄이고 두껍게 (Bar Style)
-        bar_count = 60 # 막대 개수
-        step = w / bar_count
+        """[메인] 오디오 데이터를 시각화 데이터로 변환 (통합 애니메이션 루프 활용)"""
+        bar_count = 150 # __init__의 데이터 개수와 동기화
         audio_step = len(y) // bar_count
+        new_data = []
         
+        # 실제 오디오 진폭 추출
+        h_factor = 100 # 진폭 증폭비
         for i in range(bar_count):
             idx = i * audio_step
             if idx < len(y):
-                # 해당 구간의 평균 진폭 구하기
                 chunk = y[idx:idx+audio_step]
                 if len(chunk) > 0:
-                    amp = np.mean(np.abs(chunk)) * (h) * 1.5 
-                else: 
-                    amp = 5
-                
-                x = i * step + (step/2)
-                mid = h/2
-                
-                # 색상: 중앙부는 골드, 사이드는 어둡게
-                dist = abs(i - bar_count/2) / (bar_count/2)
-                if dist < 0.5: color = COLOR_GOLD
-                else: color = "#555"
-                
-                # 라인 생성 (초기 상태)
-                line = self.viz_canvas.create_line(x, mid-amp, x, mid+amp, fill=color, width=8, capstyle="round")
-                self.wave_lines.append(line)
-                self.wave_amps.append(amp)
+                    amp = np.mean(np.abs(chunk)) * h_factor
+                    new_data.append(max(8, min(35, amp))) # 최소/최대 높이 제한
+                else:
+                    new_data.append(8)
+            else:
+                new_data.append(8)
         
-        # 애니메이션 시작 (기존 루프 제거 후 시작)
-        if hasattr(self, 'anim_id'):
-            self.after_cancel(self.anim_id)
-        self.animate_wave()
+        # 데이터 교체 (애니메이션 루프가 다음 프레임에서 이 데이터를 가져감)
+        self.waveform_data = new_data
+        self.wave_lines = [] # 라인을 비워주면 다음 draw_initial_waveform 호출 시 새로 그립니다.
+        self.current_prog = 0 # 진행도 초기화
 
     def animate_status(self):
         """[UI] 하단 상태바 글로우 애니메이션 (숨쉬기 효과)"""
@@ -1498,35 +1504,19 @@ class AudioStudioApp(ctk.CTk):
             pass
 
     def animate_wave(self):
-        """막대들을 춤추게 만드는 함수"""
-        if not hasattr(self, 'wave_lines') or not self.wave_lines:
-            # [FIX] 파일이 없을 때도 기본 파형이 둠칫둠칫하게 유지
-            self.draw_initial_waveform(0)
-            self.anim_id = self.after(100, self.animate_wave)
-            return
-        
-        h = self.viz_canvas.winfo_height()
-        mid = h/2
-        
-        for i, line in enumerate(self.wave_lines):
-            base_amp = self.wave_amps[i]
+        """막대들을 춤추게 만드는 함수 (상시 실행)"""
+        try:
+            # Phase 업데이트 (이동 속도 조절)
+            self.wave_phase += 0.15
             
-            # 랜덤하게 춤추는 효과 (둠칫둠칫)
-            # base_amp를 기준으로 0.8 ~ 1.2배 크기로 진동
-            scale = random.uniform(0.7, 1.3)
-            current_amp = base_amp * scale
+            # 파형 다시 그리기 (이미 생성된 객체들의 좌표만 수정함)
+            self.draw_initial_waveform()
             
-            # 최소 높이 보장
-            if current_amp < 2: current_amp = 2
-            
-            # 좌표 업데이트
-            coords = self.viz_canvas.coords(line)
-            if coords:
-                x = coords[0]
-                self.viz_canvas.coords(line, x, mid-current_amp, x, mid+current_amp)
-        
-        # 50ms마다 반복 (초당 20프레임)
-        self.anim_id = self.after(50, self.animate_wave)
+            # 50ms마다 반복 (초당 약 20프레임의 부드러운 움직임)
+            self.anim_id = self.after(50, self.animate_wave)
+        except Exception as e:
+            print(f"Animation Error: {e}")
+            self.anim_id = self.after(1000, self.animate_wave) # 에러 시 재시도
 
     # --- UI 업데이트용 메서드 (메인 스레드에서 실행됨) ---
     def update_progress_ui(self, msg, p):
