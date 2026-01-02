@@ -11,6 +11,10 @@ else:
     # 개발 환경
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
+# [MODULAR] 모듈 로딩을 위해 core 및 utils 폴더를 시스템 경로에 추가
+sys.path.append(os.path.join(base_dir, 'core'))
+sys.path.append(os.path.join(base_dir, 'utils'))
+
 # DLL 검색 경로에 venv의 DLL들을 추가
 venv_dir = os.path.join(base_dir, ".venv")
 if os.path.exists(venv_dir):
@@ -333,7 +337,7 @@ class AudioStudioApp(ctk.CTk):
         self.configure(bg="black")
         
         # [NEW] 아이콘 설정 (윈도우 타이틀바 & 작업 표시줄)
-        icon_path = os.path.join(base_dir, "icon.ico")
+        icon_path = os.path.join(base_dir, "assets", "icon.ico")
         if os.path.exists(icon_path):
             try:
                 self.iconbitmap(icon_path)
@@ -1090,7 +1094,7 @@ class AudioStudioApp(ctk.CTk):
             # [FIX] 별도의 프로세스로 midi_engine.py 실행
             # GUI가 아닌 별도의 Python 인터프리터를 사용하여 TensorFlow 환경을 격리합니다.
             executable = sys.executable
-            engine_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "midi_engine.py")
+            engine_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "midi_engine.py")
             
             if not os.path.exists(engine_path):
                 print(f"Error: {engine_path} not found")
@@ -1201,7 +1205,7 @@ class AudioStudioApp(ctk.CTk):
                 trans = self.score_trans_var.get()
                 lyrics = self.lyrics_entry.get("1.0", "end-1c")
                 
-                master_maker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "master_score_maker.py")
+                master_maker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "master_score_maker.py")
                 
                 if os.path.exists(master_maker_script):
                     # arg order: [midi_folder] [transposition] [lyrics_text]
