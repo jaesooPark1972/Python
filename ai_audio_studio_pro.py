@@ -388,6 +388,11 @@ class AudioStudioApp(ctk.CTk):
                 self.gpu_var.set(False)
         except:
              self.gpu_status_lbl.configure(text="⚠️ SYSTEM: CHECK FAILED", text_color="gray")
+    
+        # [FIX] UI 애니메이션 트리거 (GPU 체크 직후 실행)
+        self.after(100, self.draw_initial_waveform)
+        self.after(200, self.animate_status)
+        self.after(300, self.animate_wave)
 
     def setup_ui(self):
         # 전체 컨테이너 (좌우 여백 확대)
@@ -1405,7 +1410,7 @@ class AudioStudioApp(ctk.CTk):
         # 캔버스 실제 크기 확인
         w = self.viz_canvas.winfo_width()
         h = self.viz_canvas.winfo_height()
-        if w <= 1: w = 1000 # 초기 로딩 시 보정
+        if w <= 1 or w > 5000: w = 1200 # 초기 로딩 시 보정 (충분히 넓게)
         if h <= 1: h = 70
         
         mid = h / 2
@@ -1494,7 +1499,11 @@ class AudioStudioApp(ctk.CTk):
 
     def animate_wave(self):
         """막대들을 춤추게 만드는 함수"""
-        if not hasattr(self, 'wave_lines') or not self.wave_lines: return
+        if not hasattr(self, 'wave_lines') or not self.wave_lines:
+            # [FIX] 파일이 없을 때도 기본 파형이 둠칫둠칫하게 유지
+            self.draw_initial_waveform(0)
+            self.anim_id = self.after(100, self.animate_wave)
+            return
         
         h = self.viz_canvas.winfo_height()
         mid = h/2
